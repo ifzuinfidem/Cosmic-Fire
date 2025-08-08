@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Cosmic Fire</title>
+<link rel="icon" type="image" href="icon.jpg">
+<style>
+  /* -------- basic page & HUD -------- */
+  html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-family:Arial,Helvetica,sans-serif}
+  #ui{position:fixed;top:8px;left:8px;right:8px;display:flex;gap:16px;font-weight:bold;text-shadow:0 0 6px #000}
+  #ui span{min-width:120px}
+  canvas{display:block;width:100%;height:100%}
+
+  /* intro overlay */
+  #introOverlay{position:fixed;inset:0;background:rgba(0,0,0,0.9);color:#fff;display:flex;justify-content:center;align-items:center;text-align:center}
+  .diffButton{margin:0 6px;padding:8px 16px;border:none;border-radius:6px;font-weight:bold;cursor:pointer}
+  .diffButton:hover{background:#333}
+
+  /* game‑over overlay */
+  #memeOverlay{position:fixed;inset:0;background:rgba(0,0,0,0.85);color:#fff;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;font-size:32px}
+  #memeBtn{margin-top:16px;padding:10px 24px;border:none;border-radius:6px;background:#ff0066;color:#fff;font-size:20px;font-weight:bold;cursor:pointer}
+</style>
+</head>
+<body tabindex="0">
+
+<!-- HUD -->
+<div id="ui">
+  <span id="score">Score: 0</span>
+  <span id="health">Health: 3</span>
+  <span id="time">Time: 0s</span>
+  <span id="ammo">Ammo: 30</span>
+
+</div>
+
+<!-- intro overlay -->
+<div id="introOverlay">
+  <div>
+    <h1>Cosmic Fire</h1>
+    <p>Move with Arrow keys, shoot with Spacebar.</p>
+    <p>Select difficulty:</p>
+    <button class="diffButton" data-diff="easy">Easy</button>
+    <button class="diffButton" data-diff="mild">Mild</button>
+    <button class="diffButton" data-diff="hard">Hard</button>
+    <p style="font-size:12px">Shortcuts 1 = Easy, 2 = Mild, 3 = Hard</p>
+  </div>
+</div>
+
+<!-- game‑over overlay -->
+<div id="memeOverlay" style="display:none">
+  <div>Game Over<br/>Please go and touch grass now.</div>
+  <button id="memeBtn">Play Again</button>
+</div>
+
+<canvas id="game"></canvas>
+
+<script>
+/* ---------- difficulty presets ---------- */
+const difficultySettings={
+  easy :{spawnMin:1,spawnMax:2,timerMin:1.0,timerMax:1.6},
+  mild :{spawnMin:2,spawnMax:3,timerMin:0.5,timerMax:1.0},
+  hard :{spawnMin:3,spawnMax:5,timerMin:0.3,timerMax:0.6}
+};
+let difficulty='easy';
+
+/* ---------- canvas & helpers ---------- */
+const c=document.getElementById('game');
+const ctx=c.getContext('2d');
+function resize(){c.width=innerWidth;c.height=innerHeight;}resize();addEventListener('resize',resize);
+const randBetween=(a,b)=>Math.random()*(b-a)+a;
+const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+
+/* ---------- stars ---------- */
+const stars=[];function initStars(){stars.length=0;const n=(c.width+c.height)/3;
+  for(let i=0;i<n;i++){stars.push({x:Math.random()*c.width,y:Math.random()*c.height,r:Math.random()<.8?1:2,s:.2+.4*Math.random()});}}
+function updStars(d){for(const s of stars){s.y+=s.s*d*40;if(s.y>c.height){s.y=0;s.x=Math.random()*c.width;}}}
+function drawStars(){ctx.fillStyle='#88aaff';for(const s of stars){ctx.globalAlpha=s.r===2?.9:.5;ctx.fillRect(s.x,s.y,s.r,s.r);}ctx.globalAlpha=1;}
+
+/* ---------- player ---------- */
+const player={x:0,y:0,vx:0,vy:0,ang:0,cool:0};
+const ACC=900,MAXS=350;
+function resetP(){Object.assign(player,{x:c.width/2,y:c.height*.8,vx:0,vy:0,ang:0,cool:0});}
+function updP(d){
+  player.vx*=.94;player.vy*=.94;
+  player.x+=player.vx*d;player.y+=player.vy*d;
+  const s=Math.hypot(player.vx,player.vy);if(s>MAXS){const f=MAXS/s;player.vx*=f;player.vy*=f;}
+  if(player.x<0)player.x=c.width;if(player.x>c.width)player.x=0;if(player.y<0)player.y=c.height;if(player.y>c.height)player.y=0;
+  player.ang=Math.atan2(player.vy,player.vx)||-Math.PI/2;if(player.cool>0)player.cool-=d;}
+function drawP(){ctx.save();ctx.translate(player.x,player.y);ctx.rotate(player.ang+Math.PI/2);
+  ctx.fillStyle='orange';ctx.beginPath();ctx.moveTo(-5,16);ctx.lineTo(0,24+Math.random()*4);ctx.lineTo(5,16);ctx.fill();
+  ctx.fillStyle='#9cf';ctx.beginPath();ctx.moveTo(0,-14);ctx.lineTo(10,14);ctx.lineTo(0,10);ctx.lineTo(-10,14);ctx.closePath();ctx.fill();ctx.restore();}
+
+/* ---------- lasers ---------- */
+const lasers=[];const MAXAMMO=30;let ammo=MAXAMMO;
+function shoot(){if(player.cool<=0&&ammo>0){lasers.push({x:player.x,y:player.y-14,vy:-650});player.cool=.18;ammo--;}}
+function updLasers(d){for(let i=lasers.length-1;i>=0;i--){lasers[i].y+=lasers[i].vy*d;if(lasers[i].y<-20)lasers.splice(i,1);}}
+function drawLasers(){ctx.fillStyle='#8ff';for(const l of lasers){ctx.fillRect(l.x-2,l.y-12,4,14);}}
+
+/* ---------- asteroids ---------- */
+const enemies=[];let enemyTimer=0;
+function spawnAst(){const size=randBetween(25,100);enemies.push({x:randBetween(40,c.width-40),y:-30,size,vy:randBetween(70,120),hp:2});}
+function updEnemies(d){
+  enemyTimer-=d;
+  if(enemyTimer<=0){
+    const S=difficultySettings[difficulty];
+    const n=S.spawnMin+Math.floor(Math.random()*(S.spawnMax-S.spawnMin+1));
+    for(let i=0;i<n;i++)spawnAst();
+    enemyTimer=randBetween(S.timerMin,S.timerMax);
+  }
+  for(let i=enemies.length-1;i>=0;i--){
+    const e=enemies[i];e.y+=e.vy*d;
+    if(dist(e,player)<e.size/2+14){health--;enemies.splice(i,1);if(health<=0)gameOver();continue;}
+    for(let j=lasers.length-1;j>=0;j--){if(Math.abs(lasers[j].x-e.x)<e.size/2&&Math.abs(lasers[j].y-e.y)<e.size/2){lasers.splice(j,1);if(--e.hp<=0){score+=100;enemies.splice(i,1);}break;}}
+    if(e.y>c.height+40)enemies.splice(i,1);
+  }
+}
+function drawEnemies(){ctx.fillStyle='#b96';for(const e of enemies){ctx.beginPath();ctx.arc(e.x,e.y,e.size/2,0,Math.PI*2);ctx.fill();}}
+
+/* ---------- global state ---------- */
+let score=0,health=3,running=false,intro=true,survival=0,pt=0;
+
+/* ---------- DOM refs ---------- */
+const scoreEl=document.getElementById('score');
+const healthEl=document.getElementById('health');
+const timeEl=document.getElementById('time');
+const introEl=document.getElementById('introOverlay');
+const overEl=document.getElementById('memeOverlay');
+
+/* intro buttons */
+document.querySelectorAll('.diffButton').forEach(btn=>btn.onclick=e=>{
+  difficulty=e.target.dataset.diff||'easy';
+  introEl.style.display='none';intro=false;start();});
+addEventListener('keydown',e=>{
+  if(intro){
+    if(e.key==='1'||e.key==='2'||e.key==='3'){
+      difficulty=e.key==='1'?'easy':e.key==='2'?'mild':'hard';
+      introEl.style.display='none';intro=false;start();
+    }
+  }
+});
+
+/* restart */
+document.getElementById('memeBtn').onclick=()=>{overEl.style.display='none';introEl.style.display='flex';intro=true;};
+
+/* ---------- input ---------- */
+const keys={};addEventListener('keydown',e=>keys[e.key.toLowerCase()]=true);
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+
+/* ---------- game loop ---------- */
+let last=performance.now();
+function start(){score=0;health=3;ammo=MAXAMMO;survival=0;pt=0;enemies.length=lasers.length=0;resetP();initStars();running=true;last=performance.now();loop();}
+function gameOver(){running=false;overEl.style.display='flex';}
+
+function loop(now=performance.now()){
+  if(!running)return;
+  const dt=(now-last)/1000;last=now;
+
+  /* timers & auto‑score */
+  survival+=dt;pt+=dt;if(pt>=1){score+=10;pt-=1;}
+
+  /* updates */
+  updStars(dt);
+  if(keys['arrowleft'])player.vx-=ACC*dt;
+  if(keys['arrowright'])player.vx+=ACC*dt;
+  if(keys['arrowup'])player.vy-=ACC*dt;
+  if(keys['arrowdown'])player.vy+=ACC*dt;
+  if(keys[' '])shoot();
+  updP(dt);updLasers(dt);updEnemies(dt);
+
+  /* render */
+  ctx.clearRect(0,0,c.width,c.height);
+  drawStars();drawLasers();drawEnemies();drawP();
+
+  /* HUD */
+  scoreEl.textContent='Score: '+score;
+  healthEl.textContent='Health: '+health;
+  timeEl.textContent='Time: '+Math.floor(survival)+'s';
+  ammoEl.textContent = 'Ammo: ' + ammo;
+  requestAnimationFrame(loop);
+}
+
+/* ---------- sound effects ---------- */
+let shootSound = new Audio('shoot.wav');
+let explodeSound = new Audio('explode.wav');
+
+function shoot() {
+  if (player.cool <= 0 && ammo > 0) {
+    lasers.push({ x: player.x, y: player.y - 14, vy: -650 });
+    player.cool = .18;
+    ammo--;
+    shootSound.play(); 
+  }
+}
+
+/* ---------- ammo refill ---------- */
+let ammoTimer = 0;
+
+function refillAmmo(dt) {
+  ammoTimer += dt;
+  if (ammoTimer >= 1.5 && ammo < MAXAMMO) {
+    ammo++;
+    ammoTimer = 0;
+  }
+}
+function updLasers(dt) {
+  for (let i = lasers.length - 1; i >= 0; i--) {
+    lasers[i].y += lasers[i].vy * dt;
+    if (lasers[i].y < -20) lasers.splice(i, 1);
+  }
+  refillAmmo(dt);
+}
+
+const ammoEl = document.getElementById('ammo');
+
+document.addEventListener('keydown', function(e) {
+    if (e.code === 'Space') {
+        fireBullet(); // your fire function
+    }
+});
+
+document.addEventListener('click', function() {
+    fireBullet();
+});
+
+</script>
+</body>
+</html>
